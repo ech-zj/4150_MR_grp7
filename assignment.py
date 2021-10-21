@@ -10,7 +10,9 @@ from geometry_msgs.msg import Point
 import math
 
 line_id = 0
+
 pub = rospy.Publisher('/visualization_marker', Marker, queue_size=10)
+#pub_features = rospy.Publisher('depth_features', DepthFeatures, queue_size=10)
 
 # Make an rviz line list given a list of Line objects
 def buildRvizLineList(lines):
@@ -26,7 +28,7 @@ def buildRvizLineList(lines):
     Returns:
         None
     '''
-    #print('In buildLines')
+    print 'In buildLines'
 
     line_list = Marker()
     line_list.header.frame_id = 'base_scan'
@@ -59,7 +61,7 @@ def getDistBetwPoints(p_a, p_b):
     return math.sqrt(math.pow(p_a.x-p_b.x,2) + math.pow(p_a.y-p_b.y,2))
 
 def getLine(points, first=False):
-    THRESHOLD = 0.05
+    THRESHOLD = 0.12
     '''
     Given a list of geometry_msgs/Point objects, return the line that fits over them.
 
@@ -97,17 +99,17 @@ def getLine(points, first=False):
     max_dist = 0.0
     i_max_dist = 0
 
-    if len(points) > 2:
-        for p_i in range(len(points)):
-            temp_max_dist = abs(getDistanceToLine(points[p_i], line))
-            if temp_max_dist > max_dist:
-                max_dist = temp_max_dist
-                i_max_dist = p_i
-    
-    if max_dist > THRESHOLD or max_dist == 0 or len(points) <= 2:
+    for p_i in range(len(points)):
+        temp_max_dist = getDistanceToLine(points[p_i], line)
+        if temp_max_dist > max_dist:
+            max_dist = temp_max_dist
+            i_max_dist = p_i
+    if max_dist > THRESHOLD:
         line_temp = Line(0,0,0,-1,0,0)
         return line_temp, i_max_dist
-
+    if max_dist < 0:
+        print 'returning a bad distance'
+        print max_dist
     return line, max_dist
 
 def getAllLines(points):
@@ -179,7 +181,6 @@ def getAllLines(points):
             #**************************************************
             l, i_max_dist = getLine(toProcess[0])
             result.append(l)
-
             #print('New line:')
             #result[-1].printLine()
 
@@ -243,7 +244,7 @@ def getCornersFromLines(lines):
 
 
 def getDistanceToLine(point, line):
-    relative = (point.x*line.A + point.y*line.B + line.C)
+    relative = abs(point.x*line.A + point.y*line.B + line.C)
     return relative
 
 def buildRvizCorners(corners):
@@ -282,28 +283,15 @@ def callback(data):
         point.x = r * math.cos(angle)
         point.y = r * math.sin(angle)
         points.append(point)
+    MIN = 0.005
+    for i in range(len(points)-1,-1,-1):
+        p = points[i]
+        if p.x < MIN and p.y < MIN:
+            del points[i]
     lines = getAllLines(points)
     buildRvizLineList(lines)
     corners = getCornersFromLines(lines)
-    rvix_corners = buildRvizCorners(corners)
-
-    #corners = []
-    #for i in range(1,len(points)-1):
-    #    p_a = points[i-1]
-    #    p_b = points[i]
-    #    p_c = points[i+1]
-    #    line_a = Line(0, 0, 0, p_a, p_b, 0)
-    #    line_b = Line(0, 0, 0, p_b, p_c, 0)
-    #    line_list = buildRvizLineList([line_a, line_b])
-    #    pub.publish(line_list)
-    #    corner = Corner(p_b, 0, 0, line_a, line_b)
-    #    corners.append(corner)
-    #for i in range(len(corners)//2):
-    #    corner_a = corners[i*2]
-    #    corner_b = corners[i*2+1]
-    #    corner_list = buildRvizCorners([corner_a, corner_b])
-    #    pub.publish(corner_list)
-
+    buildRvizCorners(corners)
 
 def main():
     print 'In main'
