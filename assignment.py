@@ -11,6 +11,7 @@ import math
 
 line_id = 0
 pub = rospy.Publisher('/visualization_marker', Marker, queue_size=10)
+depth_pub = rospy.Publisher("/depth_features", DepthFeatures, queue_size=10)
 
 # Make an rviz line list given a list of Line objects
 def buildRvizLineList(lines):
@@ -286,6 +287,10 @@ def callback(data):
     buildRvizLineList(lines)
     corners = getCornersFromLines(lines)
     rvix_corners = buildRvizCorners(corners)
+    
+    # publish to /depth_features
+    df = DepthFeatures(lines, corners)
+    depth_pub.publish(df)
 
     #corners = []
     #for i in range(1,len(points)-1):
