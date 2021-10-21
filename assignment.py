@@ -284,9 +284,10 @@ def callback(data):
         point.y = r * math.sin(angle)
         points.append(point)
     MIN = 0.005
+    NEG_MIN = -MIN
     for i in range(len(points)-1,-1,-1):
         p = points[i]
-        if p.x < MIN and p.y < MIN:
+        if NEG_MIN < p.x < MIN and NEG_MIN < p.y < MIN:
             del points[i]
     lines = getAllLines(points)
     buildRvizLineList(lines)
