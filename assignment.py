@@ -3,7 +3,7 @@
 import rospy
 from Line import Line
 from Corner import Corner
-from laser_feature_extraction.msg import LineMsg, CornerMsg
+from laser_feature_extraction.msg import LineMsg, CornerMsg, DepthFeatures
 from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
@@ -12,7 +12,7 @@ import math
 line_id = 0
 
 pub = rospy.Publisher('/visualization_marker', Marker, queue_size=10)
-#pub_features = rospy.Publisher('depth_features', DepthFeatures, queue_size=10)
+pub_features = rospy.Publisher('depth_features', DepthFeatures, queue_size=10)
 
 # Make an rviz line list given a list of Line objects
 def buildRvizLineList(lines):
@@ -28,7 +28,6 @@ def buildRvizLineList(lines):
     Returns:
         None
     '''
-    print 'In buildLines'
 
     line_list = Marker()
     line_list.header.frame_id = 'base_scan'
@@ -51,6 +50,7 @@ def buildRvizLineList(lines):
 
 
     pub.publish(line_list)
+    return line_list
 
 def _getSlope(p_a, p_b):
         if p_b.x-p_a.x != 0 and p_b.y-p_a.y != 0:
@@ -225,8 +225,10 @@ def getCornersFromLines(lines):
     ANGLE_THRESHOLD = math.pi/4
     SHORT_DISTANCE = 0.25
     corners = []
-    for line in lines:
-        for line2 in lines:
+    for i, line in enumerate(lines):
+        j = i+1
+        while j < len(lines):
+            line2 = lines[j]
             theta = math.atan((line.slope-line2.slope)/(1+line.slope*line2.slope))
             if theta > ANGLE_THRESHOLD:
                 line_compare = [line.p_a, line.p_b]
@@ -236,10 +238,11 @@ def getCornersFromLines(lines):
                         d = getDistBetwPoints(point, point2)
                         if d <= SHORT_DISTANCE:
                             cornerPoint = Point()
-                            cornerPoint.x = (point.x-point2.x)/2
-                            cornerPoint.y = (point.y-point2.y)/2
+                            cornerPoint.x = (point.x+point2.x)/2
+                            cornerPoint.y = (point.y+point2.y)/2
                             new_corner = Corner(cornerPoint,0,0,line,line2)
                             corners.append(new_corner)
+            j += 1
     return corners
 
 
@@ -266,12 +269,35 @@ def buildRvizCorners(corners):
     pointMarker.color.a = 1.0
     pointMarker.colors.append(pointMarker.color)
 
-
     for c in corners:
         pointMarker.points.append(c.p)
 
     pub.publish(pointMarker)
     return pointMarker
+
+def getPublishLines(lines):
+    pub_lines = []
+    for i, line in enumerate(lines):
+        lineMsg = LineMsg()
+        lineMsg.A = line.A
+        lineMsg.B = line.B
+        lineMsg.C = line.C
+        lineMsg.p_a = line.p_a
+        lineMsg.p_b = line.p_b
+        lineMsg.id = i
+        pub_lines.append(lineMsg)
+    return pub_lines
+
+def getPublishCorners(corners):
+    pub_corners = []
+    for i, corner in enumerate(corners):
+        cornerMsg = CornerMsg()
+        cornerMsg.p = corner.p
+        cornerMsg.psi = corner.psi
+        cornerMsg.id = i
+        cornerMsg.l_a = corner.l_a
+        cornerMsg.l_b = corner.l_b
+    return pub_corners
 
 def callback(data):
     angle_min = data.angle_min
@@ -293,6 +319,13 @@ def callback(data):
     buildRvizLineList(lines)
     corners = getCornersFromLines(lines)
     buildRvizCorners(corners)
+    depthFeatures = DepthFeatures()
+    # I was not able to use return from buildRvizCorners or buildRvizLines
+    pub_lines = getPublishLines(lines)
+    pub_corners = getPublishCorners(corners)
+    depthFeatures.lines = pub_lines
+    depthFeatures.corners = pub_corners
+    pub_features.publish(depthFeatures)
 
 def main():
     print 'In main'
