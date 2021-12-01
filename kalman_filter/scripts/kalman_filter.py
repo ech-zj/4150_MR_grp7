@@ -22,44 +22,45 @@ state.pose.orientation.y = 0
 state.pose.orientation.z = 0
 state.pose.orientation.w = 0
 
-latest_pose = 0
-corners = 0
+latest_pose = Pose()
+corners = []
 
-left_tick = 0
-right_tick = 0
-left_prev = 0
-right_prev = 0
+measurements_taken = 0
+subscribing_to_something = False
+left_tick = int()
+right_tick = int()
+left_prev = int()
+right_prev = int()
 
-mean = np.mat('0 0 0; 0 0 0; 0 0 0', float)
+mean = np.mat('0; 0; 0', float)
 covariance = np.mat('1 1 1; 1 1 1; 1 1 1', float)
 
 WHEEL_CIRCUMFERENCE = 0.2073 # m
 TICKS_PER_REV = 4096.0
 Rw = 0.1435 # m
 
+DURATION = 0.1
+LAST_TIMER = 0
+DURDIFF = 0
+
 
 def predict(left_tick, right_tick):
         global state
         global covariance
+        global DURATION
+        global DURDIFF
 
         control = get_control(left_tick, right_tick)
         covariance = get_covariance(state, control, covariance)
         state = transition_model(state, control)
-
-        print("covariance: \n\t" + str(covariance))
-        print("state:" + 
-                "\n\tposition x: " + str(state.pose.position.x) + ", y: " + str(state.pose.position.y) +
-                "\n\torientation x: " + str(state.pose.orientation.x) +
-                                ", y: " + str(state.pose.orientation.y) + 
-                                ", z: " + str(state.pose.orientation.z) +
-                                ", w: " + str(state.pose.orientation.w))
-
+        return state, covariance
 
 def measure(corners):
         global state
         global latest_pose
         global mean
         global covariance
+        global measurements_taken
 
         # measurement error matrix
         q = jacobians.getQ()
@@ -68,35 +69,58 @@ def measure(corners):
         actual_theta = tf.transformations.euler_from_quaternion([ latest_pose.orientation.x, latest_pose.orientation.y, latest_pose.orientation.z, latest_pose.orientation.w ])[2]
 
         # loop through each corner
+        if not corners:
+                return None, None
         for i, corner in enumerate(corners):
+                measurements_taken += 1
                 r = math.sqrt( (corner.p.x - state.pose.position.x) ** 2 + (corner.p.y - state.pose.position.y) ** 2 )
-                phi = math.atan2( corner.y - state.pose.position.y, corner.x - state.pose.position.x ) - predicted_theta
+                phi = math.atan2( corner.p.y - state.pose.position.y, corner.p.x - state.pose.position.x ) - predicted_theta
 
                 dist_to_landmark = math.sqrt( (corner.p.x - latest_pose.position.x) ** 2 + (corner.p.y - latest_pose.position.y) ** 2 )
-                angle_to_landmark = phi = math.atan2( corner.y - latest_pose.position.y, corner.x - latest_pose.position.x ) - actual_theta
+                angle_to_landmark = phi = math.atan2( corner.p.y - latest_pose.position.y, corner.p.x - latest_pose.position.x ) - actual_theta
 
-                h = getH(corner, state.pose, r)
+                h = jacobians.getH(corner, state.pose, r)
                 h_transpose = h.transpose()
                 s = h * covariance * h_transpose + q
                 k = covariance * h_transpose * inv(s)
                 
-                z_hat = numpy.array([ r, phi, i ])
-                z = numpy.array([ dist_to_landmark, angle_to_landmark, i ])
+                z_hat = np.array([ [r], [phi], [i] ],)
+                z = np.array([[ dist_to_landmark], [angle_to_landmark], [i] ])
                 difference = z - z_hat
 
-                mean += k * difference
-                covariance *= numpy.identity(3) - k * h
+                mean = (mean*(measurements_taken-1) + k * difference)/measurements_taken
+                covariance *= np.identity(3) - k * h
 
                 return mean, covariance
 
+def display_prediction(predicted_state, predicted_covariance):
+        print("\tPREDICTION:")
+        #print(" covariance: \n\t" + str(predicted_covariance))
+        print(" state:" + 
+                "\n\tposition x: " + str(predicted_state.pose.position.x) + ", y: " + str(predicted_state.pose.position.y) +
+                "\n\torientation x: " + str(predicted_state.pose.orientation.x) +
+                                ", y: " + str(predicted_state.pose.orientation.y) + 
+                                ", z: " + str(predicted_state.pose.orientation.z) +
+                                ", w: " + str(predicted_state.pose.orientation.w))
 
-def kalman_update():
+def display_measurements(measured_mean, measured_cov):
+        print("\tMEASUREMENTS:")
+        #print(" covariance: \n\t" + str(measured_cov))
+        print(" mean:\n\t" + str(measured_mean))
+
+def kalman_update(timer):
         global corners
         global left_tick
         global right_tick
-
-        predict(left_tick, right_tick)
-        measure(corners)
+        global subscribing_to_something
+        topics_published = dict(rospy.get_published_topics())
+        if subscribing_to_something:
+                if '/sensor_state' in topics_published.keys():
+                        predicted_state, predicted_cov = predict(left_tick, right_tick)
+                        display_prediction(predicted_state, predicted_cov)
+                if '/depth_features' in topics_published.keys():
+                        measured_mean, measured_cov = measure(corners)
+                        display_measurements(measured_mean, measured_cov)
                 
 
 def get_covariance(p_state, control, cov):
@@ -165,31 +189,45 @@ def get_control(left_tick, right_tick):
 def callback(data):
         global left_tick
         global right_tick
+        global left_prev
+        global right_prev
+        global subscribing_to_something
+        if not subscribing_to_something:
+                print('CALLBACK')
+                left_prev = data.left_encoder
+                right_prev = data.right_encoder
+        subscribing_to_something = True
         
         left_tick = data.left_encoder
         right_tick = data.right_encoder
-        
-        #tmp
-        kalman_update()
 
 
-def set_latest_pose(data):
+def set_latest_orientation(data):
         global latest_pose
+        global subscribing_to_something
+        if not subscribing_to_something:
+                print('SET_LATEST_ORIENTATION')
+        subscribing_to_something = True
 
-        latest_pose = Pose()
         latest_pose = data.pose.pose
 
 def get_depth_features(data):
         global corners
+        global subscribing_to_something
+        if not subscribing_to_something:
+                print('GET_DEPTH_FEATURES')
+        subscribing_to_something = True
 
         corners = data.corners
 
 
 def listen():
-        rospy.init_node('kalman', anonymous=False)
+        global DURATION
+        rospy.init_node('kalman_filter', anonymous=False)
         rospy.Subscriber('/sensor_state', SensorState, callback)
         rospy.Subscriber('/odom', Odometry, set_latest_orientation)
-        rospy.Subscriber('depth_featuers', DepthFeatures, get_depth_features)
+        rospy.Subscriber('/depth_features', DepthFeatures, get_depth_features)
+        rospy.Timer(rospy.Duration(DURATION), kalman_update)
 
         # sleep to connect with roscore
         rospy.sleep(.5)
